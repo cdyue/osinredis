@@ -1,4 +1,4 @@
-module osinredis
+module github.com/cdyue/osinredis
 
 go 1.13
 
