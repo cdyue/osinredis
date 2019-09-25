@@ -8,6 +8,7 @@ import (
 	"github.com/RangelReale/osin"
 	"github.com/gomodule/redigo/redis"
 	"github.com/pkg/errors"
+	uuid "github.com/satori/go.uuid"
 )
 
 func init() {
