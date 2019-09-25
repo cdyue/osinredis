@@ -6,9 +6,8 @@ import (
 	"fmt"
 
 	"github.com/RangelReale/osin"
-	"github.com/garyburd/redigo/redis"
+	"github.com/gomodule/redigo/redis"
 	"github.com/pkg/errors"
-	"github.com/satori/go.uuid"
 )
 
 func init() {
