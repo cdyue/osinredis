@@ -1,30 +1,21 @@
 package osinredis
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/RangelReale/osin"
-	"github.com/gomodule/redigo/redis"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 )
 
 var (
-	pool = &redis.Pool{
-		Dial: func() (redis.Conn, error) {
-			redisAddr := os.Getenv("REDIS_ADDR")
-			if redisAddr == "" {
-				redisAddr = ":6379"
-			}
-			conn, err := redis.Dial("tcp", redisAddr)
-			if err != nil {
-				panic(err)
-			}
-			return conn, nil
-		},
-	}
+	pool = redis.NewClient(&redis.Options{
+		Addr: os.Getenv("REDIS_ADDR"),
+	})
 )
 
 func init() {
@@ -36,9 +27,8 @@ func initTestStorage() *Storage {
 }
 
 func flushAll() {
-	conn := pool.Get()
-	defer conn.Close()
-	_, err := conn.Do("FLUSHALL")
+	ctx := context.Background()
+	err := pool.FlushAll(ctx).Err()
 	if err != nil {
 		panic(err)
 	}

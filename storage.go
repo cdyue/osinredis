@@ -2,11 +2,13 @@ package osinredis
 
 import (
 	"bytes"
+	"context"
 	"encoding/gob"
 	"fmt"
+	"time"
 
 	"github.com/RangelReale/osin"
-	"github.com/gomodule/redigo/redis"
+	"github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
 	uuid "github.com/satori/go.uuid"
 )
@@ -20,12 +22,12 @@ func init() {
 
 // Storage implements "github.com/RangelReale/osin".Storage
 type Storage struct {
-	pool      *redis.Pool
+	pool      *redis.Client
 	keyPrefix string
 }
 
 // New initializes and returns a new Storage
-func New(pool *redis.Pool, keyPrefix string) *Storage {
+func New(pool *redis.Client, keyPrefix string) *Storage {
 	return &Storage{
 		pool:      pool,
 		keyPrefix: keyPrefix,
@@ -45,47 +47,30 @@ func (s *Storage) Close() {}
 
 // CreateClient inserts a new client
 func (s *Storage) CreateClient(client osin.Client) error {
-	conn := s.pool.Get()
-	if err := conn.Err(); err != nil {
-		return err
-	}
-
-	defer conn.Close()
+	ctx := context.Background()
 
 	payload, err := encode(client)
 	if err != nil {
 		return errors.Wrap(err, "failed to encode client")
 	}
 
-	_, err = conn.Do("SET", s.makeKey("client", client.GetId()), payload)
-	return errors.Wrap(err, "failed to save client")
+	return s.pool.Set(ctx, s.makeKey("client", client.GetId()), payload, 0).Err()
 }
 
 // GetClient gets a client by ID
 func (s *Storage) GetClient(id string) (osin.Client, error) {
-	conn := s.pool.Get()
-	if err := conn.Err(); err != nil {
-		return nil, err
-	}
+	ctx := context.Background()
 
-	defer conn.Close()
-
-	var (
-		rawClientGob interface{}
-		err          error
-	)
-
-	if rawClientGob, err = conn.Do("GET", s.makeKey("client", id)); err != nil {
+	rawClientGob, err := s.pool.Get(ctx, s.makeKey("client", id)).Bytes()
+	if err != nil {
 		return nil, errors.Wrap(err, "unable to GET client")
 	}
-	if rawClientGob == nil {
+	if len(rawClientGob) == 0 {
 		return nil, nil
 	}
 
-	clientGob, _ := redis.Bytes(rawClientGob, err)
-
 	var client osin.DefaultClient
-	err = decode(clientGob, &client)
+	err = decode(rawClientGob, &client)
 	return &client, errors.Wrap(err, "failed to decode client gob")
 }
 
@@ -96,86 +81,51 @@ func (s *Storage) UpdateClient(client osin.Client) error {
 
 // DeleteClient deletes given client
 func (s *Storage) DeleteClient(client osin.Client) error {
-	conn := s.pool.Get()
-	if err := conn.Err(); err != nil {
-		return err
-	}
-
-	defer conn.Close()
-
-	_, err := conn.Do("DEL", s.makeKey("client", client.GetId()))
-	return errors.Wrap(err, "failed to delete client")
+	ctx := context.Background()
+	return s.pool.Del(ctx, s.makeKey("client", client.GetId())).Err()
 }
 
 // SaveAuthorize saves authorize data.
 func (s *Storage) SaveAuthorize(data *osin.AuthorizeData) (err error) {
-	conn := s.pool.Get()
-	if err := conn.Err(); err != nil {
-		return err
-	}
-
-	defer conn.Close()
+	ctx := context.Background()
 
 	payload, err := encode(data)
 	if err != nil {
 		return errors.Wrap(err, "failed to encode data")
 	}
 
-	_, err = conn.Do("SETEX", s.makeKey("auth", data.Code), data.ExpiresIn, string(payload))
-	return errors.Wrap(err, "failed to set auth")
+	return s.pool.SetEX(ctx, s.makeKey("auth", data.Code), string(payload), time.Duration(data.ExpiresIn)*time.Second).Err()
 }
 
 // LoadAuthorize looks up AuthorizeData by a code.
 // Client information MUST be loaded together.
 // Optionally can return error if expired.
 func (s *Storage) LoadAuthorize(code string) (*osin.AuthorizeData, error) {
-	conn := s.pool.Get()
-	if err := conn.Err(); err != nil {
-		return nil, err
-	}
+	ctx := context.Background()
 
-	defer conn.Close()
-
-	var (
-		rawAuthGob interface{}
-		err        error
-	)
-
-	if rawAuthGob, err = conn.Do("GET", s.makeKey("auth", code)); err != nil {
+	rawClientGob, err := s.pool.Get(ctx, s.makeKey("auth", code)).Bytes()
+	if err != nil {
 		return nil, errors.Wrap(err, "unable to GET auth")
 	}
-	if rawAuthGob == nil {
+	if len(rawClientGob) == 0 {
 		return nil, nil
 	}
 
-	authGob, _ := redis.Bytes(rawAuthGob, err)
-
 	var auth osin.AuthorizeData
-	err = decode(authGob, &auth)
+	err = decode(rawClientGob, &auth)
 	return &auth, errors.Wrap(err, "failed to decode auth")
 }
 
 // RemoveAuthorize revokes or deletes the authorization code.
 func (s *Storage) RemoveAuthorize(code string) (err error) {
-	conn := s.pool.Get()
-	if err := conn.Err(); err != nil {
-		return err
-	}
+	ctx := context.Background()
 
-	defer conn.Close()
-
-	_, err = conn.Do("DEL", s.makeKey("auth", code))
-	return errors.Wrap(err, "failed to delete auth")
+	return s.pool.Del(ctx, s.makeKey("auth", code)).Err()
 }
 
 // SaveAccess creates AccessData.
 func (s *Storage) SaveAccess(data *osin.AccessData) (err error) {
-	conn := s.pool.Get()
-	if err := conn.Err(); err != nil {
-		return err
-	}
-
-	defer conn.Close()
+	ctx := context.Background()
 
 	payload, err := encode(data)
 	if err != nil {
@@ -184,15 +134,15 @@ func (s *Storage) SaveAccess(data *osin.AccessData) (err error) {
 
 	accessID := uuid.NewV4().String()
 
-	if _, err := conn.Do("SETEX", s.makeKey("access", accessID), data.ExpiresIn, string(payload)); err != nil {
+	if err := s.pool.SetEX(ctx, s.makeKey("access", accessID), string(payload), time.Duration(data.ExpiresIn)).Err(); err != nil {
 		return errors.Wrap(err, "failed to save access")
 	}
 
-	if _, err := conn.Do("SETEX", s.makeKey("access_token", data.AccessToken), data.ExpiresIn, accessID); err != nil {
+	if err := s.pool.SetEX(ctx, s.makeKey("access_token", data.AccessToken), accessID, time.Duration(data.ExpiresIn)).Err(); err != nil {
 		return errors.Wrap(err, "failed to register access token")
 	}
 
-	_, err = conn.Do("SETEX", s.makeKey("refresh_token", data.RefreshToken), data.ExpiresIn, accessID)
+	err = s.pool.SetEX(ctx, s.makeKey("refresh_token", data.AccessToken), accessID, time.Duration(data.ExpiresIn)).Err()
 	return errors.Wrap(err, "failed to register refresh token")
 }
 
@@ -217,14 +167,9 @@ func (s *Storage) RemoveRefresh(token string) error {
 }
 
 func (s *Storage) removeAccessByKey(key string) error {
-	conn := s.pool.Get()
-	if err := conn.Err(); err != nil {
-		return err
-	}
+	ctx := context.Background()
 
-	defer conn.Close()
-
-	accessID, err := redis.String(conn.Do("GET", key))
+	accessID, err := s.pool.Get(ctx, key).Result()
 	if err != nil {
 		return errors.Wrap(err, "failed to get access")
 	}
@@ -239,47 +184,31 @@ func (s *Storage) removeAccessByKey(key string) error {
 	}
 
 	accessKey := s.makeKey("access", accessID)
-	if _, err := conn.Do("DEL", accessKey); err != nil {
+
+	if err := s.pool.Del(ctx, accessKey).Err(); err != nil {
 		return errors.Wrap(err, "failed to delete access")
 	}
 
 	accessTokenKey := s.makeKey("access_token", access.AccessToken)
-	if _, err := conn.Do("DEL", accessTokenKey); err != nil {
+	if err := s.pool.Del(ctx, accessTokenKey).Err(); err != nil {
 		return errors.Wrap(err, "failed to deregister access_token")
 	}
 
 	refreshTokenKey := s.makeKey("refresh_token", access.RefreshToken)
-	_, err = conn.Do("DEL", refreshTokenKey)
+	err = s.pool.Del(ctx, refreshTokenKey).Err()
 	return errors.Wrap(err, "failed to deregister refresh_token")
 }
 
 func (s *Storage) loadAccessByKey(key string) (*osin.AccessData, error) {
-	conn := s.pool.Get()
-	if err := conn.Err(); err != nil {
-		return nil, err
-	}
+	ctx := context.Background()
 
-	defer conn.Close()
-
-	var (
-		rawAuthGob interface{}
-		err        error
-	)
-
-	if rawAuthGob, err = conn.Do("GET", key); err != nil {
-		return nil, errors.Wrap(err, "unable to GET auth")
-	}
-	if rawAuthGob == nil {
-		return nil, nil
-	}
-
-	accessID, err := redis.String(conn.Do("GET", key))
+	accessID, err := s.pool.Get(ctx, key).Result()
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get access ID")
 	}
 
 	accessIDKey := s.makeKey("access", accessID)
-	accessGob, err := redis.Bytes(conn.Do("GET", accessIDKey))
+	accessGob, err := s.pool.Get(ctx, accessIDKey).Bytes()
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get access gob")
 	}
@@ -289,7 +218,7 @@ func (s *Storage) loadAccessByKey(key string) (*osin.AccessData, error) {
 		return nil, errors.Wrap(err, "failed to decode access gob")
 	}
 
-	ttl, err := redis.Int(conn.Do("TTL", accessIDKey))
+	ttl, err := s.pool.TTL(ctx, accessIDKey).Result()
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get access TTL")
 	}
