@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/RangelReale/osin"
-	"github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -94,7 +94,7 @@ func (s *Storage) SaveAuthorize(data *osin.AuthorizeData) (err error) {
 		return errors.Wrap(err, "failed to encode data")
 	}
 
-	return s.pool.SetEX(ctx, s.makeKey("auth", data.Code), string(payload), time.Duration(data.ExpiresIn)*time.Second).Err()
+	return s.pool.SetEx(ctx, s.makeKey("auth", data.Code), string(payload), time.Duration(data.ExpiresIn)*time.Second).Err()
 }
 
 // LoadAuthorize looks up AuthorizeData by a code.
@@ -134,15 +134,15 @@ func (s *Storage) SaveAccess(data *osin.AccessData) (err error) {
 
 	accessID := uuid.NewV4().String()
 
-	if err := s.pool.SetEX(ctx, s.makeKey("access", accessID), string(payload), time.Duration(data.ExpiresIn)).Err(); err != nil {
+	if err := s.pool.SetEx(ctx, s.makeKey("access", accessID), string(payload), time.Duration(data.ExpiresIn)).Err(); err != nil {
 		return errors.Wrap(err, "failed to save access")
 	}
 
-	if err := s.pool.SetEX(ctx, s.makeKey("access_token", data.AccessToken), accessID, time.Duration(data.ExpiresIn)).Err(); err != nil {
+	if err := s.pool.SetEx(ctx, s.makeKey("access_token", data.AccessToken), accessID, time.Duration(data.ExpiresIn)).Err(); err != nil {
 		return errors.Wrap(err, "failed to register access token")
 	}
 
-	err = s.pool.SetEX(ctx, s.makeKey("refresh_token", data.AccessToken), accessID, time.Duration(data.ExpiresIn)).Err()
+	err = s.pool.SetEx(ctx, s.makeKey("refresh_token", data.AccessToken), accessID, time.Duration(data.ExpiresIn)).Err()
 	return errors.Wrap(err, "failed to register refresh token")
 }
 
