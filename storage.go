@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/RangelReale/osin"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/redis/go-redis/v9"
-	uuid "github.com/satori/go.uuid"
 )
 
 func init() {
@@ -132,7 +132,7 @@ func (s *Storage) SaveAccess(data *osin.AccessData) (err error) {
 		return errors.Wrap(err, "failed to encode access")
 	}
 
-	accessID := uuid.NewV4().String()
+	accessID := uuid.Must(uuid.NewV7()).String()
 
 	if err := s.pool.SetEx(ctx, s.makeKey("access", accessID), string(payload), time.Duration(data.ExpiresIn)).Err(); err != nil {
 		return errors.Wrap(err, "failed to save access")
